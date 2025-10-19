@@ -206,7 +206,59 @@ with st.sidebar:
 if G is None:
     st.stop()
 
-st.subheader("Open-loop with compensator (if any)")
+if G is not None:
+    st.subheader("Resulting Transfer Functions")
+
+    # helper formatting
+    def clean_num(x):
+        if abs(x - round(x)) < 1e-10:
+            return str(int(round(x)))
+        else:
+            return f"{x:.4g}"
+
+    def poly_to_latex(coeffs):
+        terms = []
+        n = len(coeffs)
+        for i, c in enumerate(coeffs):
+            power = n - i - 1
+            if abs(c) < 1e-12:
+                continue
+            c_str = clean_num(c)
+            if power == 0:
+                terms.append(f"{c_str}")
+            elif power == 1:
+                terms.append(f"{c_str} s")
+            else:
+                terms.append(f"{c_str} s^{{{power}}}")
+        return " + ".join(terms) if terms else "0"
+
+    def tf_to_latex(tf_obj):
+        num, den = ctl.tfdata(tf_obj)
+        num = [float(n) for n in num[0][0]]
+        den = [float(d) for d in den[0][0]]
+        num_str = poly_to_latex(num)
+        den_str = poly_to_latex(den)
+        return r"\frac{" + num_str + "}{" + den_str + "}"
+
+    # Detect if compensator actually active (checkbox True)
+    comp_active = "C" in locals() and C is not None and not (
+        len(ctl.tfdata(C)[0][0][0]) == 1 and ctl.tfdata(C)[0][0][0][0] == 1
+    )
+
+    # Case 1: no compensator
+    if not comp_active:
+        st.latex(r"L(s) = G(s) = " + tf_to_latex(G))
+
+    # Case 2: with compensator
+    else:
+        L = C * G
+        st.latex(
+            r"\begin{aligned}"
+            r"L(s) &= C(s)\,G(s) = " + tf_to_latex(C) + r"\cdot" + tf_to_latex(G) + r"\\[16pt]"
+            r"L(s) &= " + tf_to_latex(L) +
+            r"\end{aligned}"
+        )
+
 col1, col2 = st.columns(2)
 
 # ---------- Margins and Bandwidth ----------
