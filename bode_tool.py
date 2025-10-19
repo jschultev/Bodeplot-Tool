@@ -167,10 +167,11 @@ with st.sidebar:
         L_delay, delay_info, delay_err = None, None, None
 
     st.header("Frequency range")
-    wmin = st.number_input("ω min (rad/s)", value=1e-2, format="%.6g")
-    wmax = st.number_input("ω max (rad/s)", value=1e2, format="%.6g")
+    wmin = st.number_input("ω min (rad/s)", value=1e-2, step=0.1 format="%.6g")
+    wmax = st.number_input("ω max (rad/s)", value=1e2, step=10 format="%.6g")
     pts  = st.slider("Frequency points", min_value=200, max_value=5000, value=1000, step=100)
-    w = np.logspace(np.log10(max(wmin,1e-8)), np.log10(max(wmax, wmin*10)), pts)
+    # FIXED: Removed max(wmax, wmin*10) - now uses wmin and wmax directly
+    w = np.logspace(np.log10(max(wmin, 1e-8)), np.log10(wmax), pts)
 
     st.header("Specs (\"Bode obstacle course\")")
     show_specs = st.checkbox("Show design specs overlay", value=False)
@@ -325,6 +326,7 @@ with col1:
 
     ax1.set_ylabel("Magnitude (dB)")
     ax1.set_xlabel("ω (rad/s)")
+    ax1.set_xlim([w[0], w[-1]])  # FIXED: Force proper x-range
     ax1.grid(True, which="both", ls=":")
     ax1.legend(fontsize=9)
     st.pyplot(fig1)
@@ -334,19 +336,16 @@ with col2:
     st.markdown("**Phase**")
     fig2, ax2 = plt.subplots(figsize=(8, 5))
     
-    # --- Phase unwrapping ---
-    phase_unwrapped = np.unwrap(phase_base * np.pi / 180) * 180 / np.pi
-    ax2.semilogx(w, phase_unwrapped, label="No delay", lw=2)
+    # --- Phase plot: NO unwrapping to avoid artifacts ---
+    ax2.semilogx(w, phase_base, label="No delay", lw=2)
 
     if delay_info is not None:
         if delay_info[0] == "pade":
             _, phase_d = bode_np(L_delay, w)
-            phase_d_unwrapped = np.unwrap(phase_d * np.pi / 180) * 180 / np.pi
-            ax2.semilogx(w, phase_d_unwrapped, "--", label=f"With delay (Padé n={delay_info[2]})", lw=2)
+            ax2.semilogx(w, phase_d, "--", label=f"With delay (Padé n={delay_info[2]})", lw=2)
         else:
             _, phase_d_delayed, _, _ = bode_with_optional_exact_delay(L_base, delay_info, w)
-            phase_d_unwrapped = np.unwrap(phase_d_delayed * np.pi / 180) * 180 / np.pi
-            ax2.semilogx(w, phase_d_unwrapped, "--", label=f"With delay (exact τ={delay_info[1]:.3g}s)", lw=2)
+            ax2.semilogx(w, phase_d_delayed, "--", label=f"With delay (exact τ={delay_info[1]:.3g}s)", lw=2)
 
     # Reference line (−180°)
     ax2.axhline(-180, color="black", lw=0.8, ls="-", alpha=0.7)
@@ -379,6 +378,7 @@ with col2:
 
     ax2.set_ylabel("Phase (deg)")
     ax2.set_xlabel("ω (rad/s)")
+    ax2.set_xlim([w[0], w[-1]])  # FIXED: Force same x-range as magnitude plot
     ax2.grid(True, which="both", ls=":")
     ax2.legend(fontsize=9)
     st.pyplot(fig2)
@@ -389,17 +389,17 @@ st.subheader("Margins & Bandwidth")
 colA, colB, colC, colD, colE = st.columns(5)
 
 if show_margins:
-    colA.metric("Gain margin (×)", f"{gm:.3g}" if np.isfinite(gm) else "—")
-    colB.metric("Gain margin (dB)", f"{20*np.log10(gm):.3g}" if np.isfinite(gm) else "—")
-    colC.metric("Phase margin (deg)", f"{pm:.3g}" if np.isfinite(pm) else "—")
-    colD.metric("ω_gc (rad/s)", f"{wgc:.3g}" if np.isfinite(wgc) else "—")
-    colE.metric("ω_pc (rad/s)", f"{wpc:.3g}" if np.isfinite(wpc) else "—")
+    colA.metric("Gain margin (×)", f"{gm:.3g}" if np.isfinite(gm) else "–")
+    colB.metric("Gain margin (dB)", f"{20*np.log10(gm):.3g}" if np.isfinite(gm) else "–")
+    colC.metric("Phase margin (deg)", f"{pm:.3g}" if np.isfinite(pm) else "–")
+    colD.metric("ω_gc (rad/s)", f"{wgc:.3g}" if np.isfinite(wgc) else "–")
+    colE.metric("ω_pc (rad/s)", f"{wpc:.3g}" if np.isfinite(wpc) else "–")
 else:
-    colA.metric("Gain margin (×)", "—")
-    colB.metric("Gain margin (dB)", "—")
-    colC.metric("Phase margin (deg)", "—")
-    colD.metric("ω_gc (rad/s)", "—")
-    colE.metric("ω_pc (rad/s)", "—")
+    colA.metric("Gain margin (×)", "–")
+    colB.metric("Gain margin (dB)", "–")
+    colC.metric("Phase margin (deg)", "–")
+    colD.metric("ω_gc (rad/s)", "–")
+    colE.metric("ω_pc (rad/s)", "–")
 
 
 # ---------- Export ----------
