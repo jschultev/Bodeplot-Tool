@@ -167,8 +167,8 @@ with st.sidebar:
         L_delay, delay_info, delay_err = None, None, None
 
     st.header("Frequency range")
-    wmin = st.number_input("ω min (rad/s)", value=1e-2, step=0.1 format="%.6g")
-    wmax = st.number_input("ω max (rad/s)", value=1e2, step=10 format="%.6g")
+    wmin = st.number_input("ω min (rad/s)", value=1e-2, step=0.1, format="%.6g")
+    wmax = st.number_input("ω max (rad/s)", value=1e2, step=10.0, format="%.6g")
     pts  = st.slider("Frequency points", min_value=200, max_value=5000, value=1000, step=100)
     # FIXED: Removed max(wmax, wmin*10) - now uses wmin and wmax directly
     w = np.logspace(np.log10(max(wmin, 1e-8)), np.log10(wmax), pts)
