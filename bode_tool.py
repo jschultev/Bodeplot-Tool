@@ -53,17 +53,34 @@ def parse_tf(mode: str):
 def apply_compensator(sys):
     """Add optional compensator via checkbox."""
     add_comp = st.checkbox("Add compensator C(s)", value=False)
+
+    # Wenn Checkbox ausgeschaltet → Reset und Identity zurückgeben
     if not add_comp:
+        st.session_state.pop("pid_params", None)
+        st.session_state.pop("last_ctype", None)
         return sys, ctl.tf([1], [1]), None
+
+    # --- Auswahl Kompensatortyp ---
     ctype = st.selectbox(
-        "Compensator type",["PID", "Lead", "Lag", "Lead-Lag", "Dynamic (num/den)"],index=0)
+        "Compensator type",
+        ["PID", "Lead", "Lag", "Lead-Lag", "Dynamic (num/den)"],
+        index=0,
+    )
+
+    # --- Prüfe, ob Typ gewechselt wurde ---
+    last_ctype = st.session_state.get("last_ctype")
+    if last_ctype != ctype:
+        # Reset aller Kompensator-spezifischen States, wenn Typ wechselt
+        st.session_state.pop("pid_params", None)
+    st.session_state["last_ctype"] = ctype
     
     if ctype == "PID":
         Kp = st.number_input("Kp", value=1.0, step=0.1, format="%.6g")
-        Ki = st.number_input("Ki", value=0.0, step=0.1, format="%.6g")
-        Kd = st.number_input("Kd", value=0.0, step=0.1, format="%.6g")
+        Ki = st.number_input("Ki", value=1.0, step=0.1, format="%.6g")
+        Kd = st.number_input("Kd", value=1.0, step=0.1, format="%.6g")
         N  = st.number_input("Derivative filter N", value=10.0, step=1.0, format="%.6g")
         C = ctl.tf([Kd*N, Kp*N, Ki*N], [1, N, 0])
+        st.session_state["pid_params"] = {"Kp": Kp, "Ki": Ki, "Kd": Kd, "N": N}
         return C*sys, C, None
     
     if ctype in ["Lead", "Lag", "Lead-Lag"]:
@@ -145,16 +162,16 @@ def bode_with_optional_exact_delay(L, delay_info, w):
 with st.sidebar:
     st.header("Transfer Function")
     mode = st.selectbox("Input form", ["Numerator / Denominator", "Zeros / Poles / Gain"])
-    G, err = parse_tf(mode)
+    P, err = parse_tf(mode)
     if err:
         st.error(err)
     K = st.number_input("Scalar gain multiplier", value=1.0, step=0.1, format="%.6g")
-    if G is not None:
-        G = K*G
+    if P is not None:
+        P = K*P
 
     st.header("Compensator (optional)")
-    if G is not None:
-        L_base, C, comp_err = apply_compensator(G)
+    if P is not None:
+        L_base, C, comp_err = apply_compensator(P)
         if comp_err:
             st.warning(comp_err)
     else:
@@ -169,7 +186,7 @@ with st.sidebar:
     st.header("Frequency range")
     wmin = st.number_input("ω min (rad/s)", value=1e-2, step=0.1, format="%.6g")
     wmax = st.number_input("ω max (rad/s)", value=1e2, step=10.0, format="%.6g")
-    pts  = st.slider("Frequency points", min_value=200, max_value=5000, value=1000, step=100)
+    pts  = st.slider("Frequency points", min_value=20, max_value=5000, value=1000, step=100)
     # FIXED: Removed max(wmax, wmin*10) - now uses wmin and wmax directly
     w = np.logspace(np.log10(max(wmin, 1e-8)), np.log10(wmax), pts)
 
@@ -204,10 +221,10 @@ with st.sidebar:
     specs = SpecConfig(show_specs, min_pm, min_gm_db, target_bw, Ms)
 
 # ---------- Main ----------
-if G is None:
+if P is None:
     st.stop()
 
-if G is not None:
+if P is not None:
     st.subheader("Resulting Transfer Functions")
 
     # helper formatting
@@ -248,17 +265,54 @@ if G is not None:
 
     # Case 1: no compensator
     if not comp_active:
-        st.latex(r"L(s) = G(s) = " + tf_to_latex(G))
+        st.latex(r"L(s) = P(s) = " + tf_to_latex(P))
 
     # Case 2: with compensator
     else:
-        L = C * G
-        st.latex(
-            r"\begin{aligned}"
-            r"L(s) &= C(s)\,G(s) = " + tf_to_latex(C) + r"\cdot" + tf_to_latex(G) + r"\\[16pt]"
-            r"L(s) &= " + tf_to_latex(L) +
-            r"\end{aligned}"
-        )
+        L = C * P
+
+        # Check if PID is active
+        pid = st.session_state.get("pid_params", None)
+        if pid is not None:
+            def cn(x):
+                return str(int(round(x))) if abs(x - round(x)) < 1e-10 else f"{x:.4g}"
+            Kp, Ki, Kd, N = pid["Kp"], pid["Ki"], pid["Kd"], pid["N"]
+
+            # check if term exists
+            terms = []
+            if abs(Kp) > 1e-12:
+                terms.append(cn(Kp))
+            if abs(Ki) > 1e-12:
+                terms.append(r"\frac{" + cn(Ki) + r"}{s}")
+            if abs(Kd) > 1e-12:
+                terms.append(r"\frac{" + cn(Kd) + r"\, \cdot" + cn(N) + r"\,s}{s + " + cn(N) + r"}")
+
+            # Fallback
+            if not terms:
+                terms = ["0"]
+
+            pid_expr = " + ".join(terms)
+
+            # final expression
+            st.latex(
+                r"\begin{aligned}"
+                r"L(s) &= C(s)\,P(s) = \left("
+                + pid_expr
+                + r"\right)\cdot" + tf_to_latex(P)
+                + r"\\[16pt]"
+                r"L(s) &= " + tf_to_latex(L)
+                + r"\end{aligned}"
+            )
+
+        else:
+            # normal case without PID
+            st.latex(
+                r"\begin{aligned}"
+                r"L(s) &= C(s)\,P(s) = " + tf_to_latex(C) + r"\cdot" + tf_to_latex(P) + r"\\[16pt]"
+                r"L(s) &= " + tf_to_latex(L)
+                + r"\end{aligned}"
+            )
+
 
 col1, col2 = st.columns(2)
 
