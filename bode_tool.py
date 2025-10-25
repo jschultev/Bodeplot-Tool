@@ -120,14 +120,16 @@ def apply_delay(sys):
     if not add_delay:
         return sys, None, None
     tau = st.number_input("Time delay τ (seconds)", value=1.0, step=0.1, format="%.6g")
-    method = st.radio("Delay model", ["Padé approximation", "Exact e^{-sτ} (frequency-domain only)"], index=0, horizontal=True)
+    method = st.radio("Delay model", ["Padé approximation", "Exact e^{-sτ} (frequency-domain only)"],
+                      index=0, horizontal=True)
     if method == "Padé approximation":
-        order = st.slider("Padé order", min_value=1, max_value=8, value=4, step=1)
+        order = st.slider("Padé order", min_value=1, max_value=4, value=1, step=1)
         num_d, den_d = ctl.pade(tau, order)
         D = ctl.tf(num_d, den_d)
-        return sys*D, ("pade", tau, order), None
+        # ⬅️ Gib sowohl sys*D als auch D selbst zurück
+        return sys * D, ("pade", tau, order, D), None
     else:
-        return sys, ("exact", tau, None), None
+        return sys, ("exact", tau, None, None), None
 
 def bode_np(sys, w):
     mag, phase, omega = ctl.freqresp(sys, w)
@@ -186,7 +188,7 @@ with st.sidebar:
     st.header("Frequency range")
     wmin = st.number_input("ω min (rad/s)", value=1e-2, step=0.1, format="%.6g")
     wmax = st.number_input("ω max (rad/s)", value=1e2, step=10.0, format="%.6g")
-    pts  = st.slider("Frequency points", min_value=20, max_value=5000, value=1000, step=100)
+    pts  = 750 #sets a fixed value for the frequency points
     # FIXED: Removed max(wmax, wmin*10) - now uses wmin and wmax directly
     w = np.logspace(np.log10(max(wmin, 1e-8)), np.log10(wmax), pts)
 
@@ -224,6 +226,7 @@ with st.sidebar:
 if P is None:
     st.stop()
 
+# --- Combined Transfer Function Display (with optional delay) ---
 if P is not None:
     st.subheader("Resulting Transfer Functions")
 
@@ -258,60 +261,140 @@ if P is not None:
         den_str = poly_to_latex(den)
         return r"\frac{" + num_str + "}{" + den_str + "}"
 
-    # Detect if compensator actually active (checkbox True)
+    # Detect if compensator active
     comp_active = "C" in locals() and C is not None and not (
         len(ctl.tfdata(C)[0][0][0]) == 1 and ctl.tfdata(C)[0][0][0][0] == 1
     )
 
-    # Case 1: no compensator
-    if not comp_active:
-        st.latex(r"L(s) = P(s) = " + tf_to_latex(P))
+    # Choose which system to show (with delay or base)
+    L_display = L_delay if delay_info is not None else L_base
 
-    # Case 2: with compensator
+    # --- Case 1: No compensator ---
+    if not comp_active:
+        if delay_info is None:
+            st.latex(r"L(s) = P(s) = " + tf_to_latex(P))
+        else:
+            if delay_info[0] == "exact":
+                tau = delay_info[1]
+                st.latex(
+                    rf"""\begin{{aligned}}
+                    L(s) &= P(s)\,e^{{-s\tau}},\quad \tau={tau:.3g}\\[6pt]
+                    L(s) &= {tf_to_latex(P)}\,e^{{-{tau:.3g}s}}
+                    \end{{aligned}}"""
+                )
+
+            elif delay_info[0] == "pade":
+                tau, order = delay_info[1], delay_info[2]
+                D = delay_info[3]
+                num_d, den_d = ctl.pade(tau, order)
+                num_str = poly_to_latex(num_d)
+                den_str = poly_to_latex(den_d)
+
+                # Saubere LaTeX-Strings mit Formatkorrektur
+                pade_formula = rf"e^{{-s\tau}} \approx \frac{{{num_str}}}{{{den_str}}},\quad n={order},\;\tau={tau:.3g}"
+
+                st.latex(
+                    rf"""\begin{{aligned}}
+                    &{pade_formula}\\[6pt]
+                    L(s) &= P(s)\,D_{{\text{{Padé}}}}(s)
+                    = \big({tf_to_latex(P)}\big)\,\big({tf_to_latex(D)}\big)\\[8pt]
+                    L(s) &= {tf_to_latex(L_delay)}
+                    \end{{aligned}}"""
+                )
+
+    # --- Case 2: With compensator (PID and non-PID) ---
     else:
         L = C * P
-
-        # Check if PID is active
         pid = st.session_state.get("pid_params", None)
-        if pid is not None:
+
+        if pid is not None:  # PID custom formatting
             def cn(x):
                 return str(int(round(x))) if abs(x - round(x)) < 1e-10 else f"{x:.4g}"
             Kp, Ki, Kd, N = pid["Kp"], pid["Ki"], pid["Kd"], pid["N"]
 
-            # check if term exists
             terms = []
             if abs(Kp) > 1e-12:
                 terms.append(cn(Kp))
             if abs(Ki) > 1e-12:
-                terms.append(r"\frac{" + cn(Ki) + r"}{s}")
+                terms.append(rf"\frac{{{cn(Ki)}}}{{s}}")
             if abs(Kd) > 1e-12:
-                terms.append(r"\frac{" + cn(Kd) + r"\, \cdot" + cn(N) + r"\,s}{s + " + cn(N) + r"}")
-
-            # Fallback
+                terms.append(rf"\frac{{{cn(Kd)}\,\cdot {cn(N)}\,s}}{{s+{cn(N)}}}")
             if not terms:
                 terms = ["0"]
-
             pid_expr = " + ".join(terms)
 
-            # final expression
-            st.latex(
-                r"\begin{aligned}"
-                r"L(s) &= C(s)\,P(s) = \left("
-                + pid_expr
-                + r"\right)\cdot" + tf_to_latex(P)
-                + r"\\[16pt]"
-                r"L(s) &= " + tf_to_latex(L)
-                + r"\end{aligned}"
-            )
+            if delay_info is None:
+                st.latex(
+                    rf"""\begin{{aligned}}
+                    L(s) &= C(s)\,P(s) = \big({pid_expr}\big)\cdot{tf_to_latex(P)}\\[10pt]
+                    L(s) &= {tf_to_latex(L)}
+                    \end{{aligned}}"""
+                )
+
+            elif delay_info[0] == "exact":
+                tau = delay_info[1]
+                st.latex(
+                    rf"""\begin{{aligned}}
+                    L(s) &= C(s)\,P(s)\,e^{{-s\tau}},\quad \tau={tau:.3g}\\[8pt]
+                    L(s) &= {tf_to_latex(L)}\,e^{{-{tau:.3g}s}}
+                    \end{{aligned}}"""
+                )
+
+            elif delay_info[0] == "pade":
+                tau, order = delay_info[1], delay_info[2]
+                D = delay_info[3]
+                num_d, den_d = ctl.pade(tau, order)
+                num_str = poly_to_latex(num_d)
+                den_str = poly_to_latex(den_d)
+
+                pade_formula = rf"e^{{-s\tau}} \approx \frac{{{num_str}}}{{{den_str}}},\quad n={order},\;\tau={tau:.3g}"
+
+                st.latex(
+                    rf"""\begin{{aligned}}
+                    &{pade_formula}\\[6pt]
+                    L(s) &= C(s)\,P(s)\,D_{{\text{{Padé}}}}(s)
+                    = \big({pid_expr}\big)\,\big({tf_to_latex(P)}\big)\,\big({tf_to_latex(D)}\big)\\[10pt]
+                    L(s) &= {tf_to_latex(L_delay)}
+                    \end{{aligned}}"""
+                )
 
         else:
-            # normal case without PID
-            st.latex(
-                r"\begin{aligned}"
-                r"L(s) &= C(s)\,P(s) = " + tf_to_latex(C) + r"\cdot" + tf_to_latex(P) + r"\\[16pt]"
-                r"L(s) &= " + tf_to_latex(L)
-                + r"\end{aligned}"
-            )
+            # Non-PID compensator
+            if delay_info is None:
+                st.latex(
+                    rf"""\begin{{aligned}}
+                    L(s) &= C(s)\,P(s) = {tf_to_latex(C)}\cdot{tf_to_latex(P)}\\[10pt]
+                    L(s) &= {tf_to_latex(L)}
+                    \end{{aligned}}"""
+                )
+
+            elif delay_info[0] == "exact":
+                tau = delay_info[1]
+                st.latex(
+                    rf"""\begin{{aligned}}
+                    L(s) &= C(s)\,P(s)\,e^{{-s\tau}},\quad \tau={tau:.3g}\\[8pt]
+                    L(s) &= {tf_to_latex(L)}\,e^{{-{tau:.3g}s}}
+                    \end{{aligned}}"""
+                )
+
+            elif delay_info[0] == "pade":
+                tau, order = delay_info[1], delay_info[2]
+                D = delay_info[3]
+                num_d, den_d = ctl.pade(tau, order)
+                num_str = poly_to_latex(num_d)
+                den_str = poly_to_latex(den_d)
+                pade_formula = rf"e^{{-s\tau}} \approx \frac{{{num_str}}}{{{den_str}}},\quad n={order},\;\tau={tau:.3g}"
+
+                st.latex(
+                    rf"""\begin{{aligned}}
+                    &{pade_formula}\\[6pt]
+                    L(s) &= C(s)\,P(s)\,D_{{\text{{Padé}}}}(s)
+                    = \big({tf_to_latex(C)}\big)\,\big({tf_to_latex(P)}\big)\,\big({tf_to_latex(D)}\big)\\[10pt]
+                    L(s) &= {tf_to_latex(L_delay)}
+                    \end{{aligned}}"""
+                )
+
+
 
 
 col1, col2 = st.columns(2)
@@ -410,7 +493,7 @@ with col2:
     
     # --- Phase Margin ---
     if show_margins and np.isfinite(wpc) and np.isfinite(pm):
-        phase_at_wpc = np.interp(wpc, w, phase_unwrapped)
+        phase_at_wpc = np.interp(wpc, w, phase_base)
         ax2.axvline(wpc, color="r", ls=":", alpha=0.8)
         ax2.plot(wpc, phase_at_wpc, "ro", markersize=8)
         ax2.vlines(wpc, -180, phase_at_wpc, color="r", lw=1.2)
@@ -459,6 +542,7 @@ else:
 # ---------- Export ----------
 st.subheader("Export")
 export_mode = st.radio("Select export mode:",["Magnitude", "Phase", "Combined"],index=0,horizontal=True)
+st.caption("After changing the export mode, please wait a few seconds until the download button updates.")
 
 buf = io.BytesIO()
 
