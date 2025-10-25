@@ -23,7 +23,6 @@ class SpecConfig:
     min_phase_margin_deg: float | None
     min_gain_margin_db: float | None
     target_bw_rad: float | None
-    weight_sensitivity_peak: float | None
 
 def parse_tf(mode: str):
     if mode == "Numerator / Denominator":
@@ -192,35 +191,57 @@ with st.sidebar:
     # FIXED: Removed max(wmax, wmin*10) - now uses wmin and wmax directly
     w = np.logspace(np.log10(max(wmin, 1e-8)), np.log10(wmax), pts)
 
-    st.header("Specs (\"Bode obstacle course\")")
-    show_specs = st.checkbox("Show design specs overlay", value=False)
-    min_pm = st.number_input("Min phase margin (deg)", value=45.0, step=1.0, format="%.6g") if show_specs else None
-    min_gm_db = st.number_input("Min gain margin (dB)", value=6.0, step=1.0, format="%.6g") if show_specs else None
-    target_bw = st.number_input("Target closed-loop BW ω_B (rad/s)", value=10.0, step=0.5, format="%.6g") if show_specs else None
-    Ms = st.number_input("Sensitivity peak M_S ≤", value=2.0, step=0.1, format="%.6g") if show_specs else None
-    
-    # Low frequency (disturbance attenuation) bounds
-    show_freq_bounds = st.checkbox("Show frequency-dependent bounds", value=False) if show_specs else False
-    if show_freq_bounds:
-        st.write("**Low frequency (disturbance attenuation):**")
+    st.header("Frequency Domain Specifications")
+    st.subheader("(Bode obstacle course\)")
+    # --- Phase Margin ---
+    show_pm = st.checkbox("Show phase margin specification", value=False)
+    min_pm = (
+        st.number_input("Min phase margin (deg)", value=45.0, step=1.0, format="%.6g")
+        if show_pm else None
+    )
+
+    # --- Gain Margin ---
+    show_gm = st.checkbox("Show gain margin specification", value=False)
+    min_gm_db = (
+        st.number_input("Min gain margin (dB)", value=6.0, step=1.0, format="%.6g")
+        if show_gm else None
+    )
+
+    # --- Target Bandwidth ---
+    show_bw = st.checkbox("Show target bandwidth specification", value=False)
+    target_bw = (
+        st.number_input("Target closed-loop BW ω_B (rad/s)", value=10.0, step=0.5, format="%.6g")
+        if show_bw else None
+    )
+
+    # --- Frequency-dependent bounds (low/high frequency specs) ---
+    show_bounds = st.checkbox("Show frequency-dependent bounds", value=False)
+    if show_bounds:
+        st.markdown("**Low-frequency (disturbance attenuation):**")
         freq_low_max = st.number_input("ω_low_max (rad/s)", value=0.1, step=0.01, format="%.6g")
         mag_low_min = st.number_input("Min magnitude at low freq (dB)", value=-20.0, step=1.0, format="%.6g")
-        
-        st.write("**High frequency (measurement noise):**")
-        freq_high_min = st.number_input("ω_high_min (rad/s)", value=100.0, step=10.0, format="%.6g")
+
+        st.markdown("**High-frequency (measurement noise):**")
+        freq_high_min = st.number_input("ω_high_min (rad/s)", value=10.0, step=10.0, format="%.6g")
         mag_high_max = st.number_input("Max magnitude at high freq (dB)", value=-40.0, step=1.0, format="%.6g")
-        
+
         freq_bounds = {
             "show": True,
             "freq_low_max": freq_low_max,
             "mag_low_min": mag_low_min,
             "freq_high_min": freq_high_min,
-            "mag_high_max": mag_high_max
+            "mag_high_max": mag_high_max,
         }
     else:
         freq_bounds = {"show": False}
-    
-    specs = SpecConfig(show_specs, min_pm, min_gm_db, target_bw, Ms)
+
+    # --- Collect all specs in one config object ---
+    specs = SpecConfig(
+        show_specs=any([show_pm, show_gm, show_bw, show_bounds]),
+        min_phase_margin_deg=min_pm,
+        min_gain_margin_db=min_gm_db,
+        target_bw_rad=target_bw,
+    )
 
 # ---------- Main ----------
 if P is None:
@@ -419,7 +440,7 @@ with col1:
     mag_base, phase_base = bode_np(L_base, w)
     mag_db = 20 * np.log10(mag_base)
     ax1.semilogx(w, mag_db, label="No delay", lw=2)
-
+    #ymin, ymax = np.min(mag_db), np.max(mag_db)
     # optional delay curve
     if delay_info is not None:
         if delay_info[0] == "pade":
@@ -458,8 +479,10 @@ with col1:
         # High frequency region (measurement noise)
         freq_high_min = freq_bounds["freq_high_min"]
         mag_high_max = freq_bounds["mag_high_max"]
-        ax1.fill_between(w[w >= freq_high_min], mag_high_max, 150, alpha=0.2, color="yellow", label="Measurement noise")
+        ax1.fill_between(w[w >= freq_high_min], mag_high_max, 150, alpha=0.2, color="red", label="Measurement noise")
         ax1.axvline(freq_high_min, color="gray", ls="--", lw=1, alpha=0.5)
+
+    #ax1.set_ylim(ymin - 3, ymax + 3)
 
     ax1.set_ylabel("Magnitude (dB)")
     ax1.set_xlabel("ω (rad/s)")
