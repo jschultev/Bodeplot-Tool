@@ -53,23 +53,23 @@ def apply_compensator(sys):
     """Add optional compensator via checkbox."""
     add_comp = st.checkbox("Add compensator C(s)", value=False)
 
-    # Wenn Checkbox ausgeschaltet → Reset und Identity zurückgeben
+    # reset if checkbox unselected
     if not add_comp:
         st.session_state.pop("pid_params", None)
         st.session_state.pop("last_ctype", None)
         return sys, ctl.tf([1], [1]), None
 
-    # --- Auswahl Kompensatortyp ---
+    # what compensator
     ctype = st.selectbox(
         "Compensator type",
         ["PID", "Lead", "Lag", "Lead-Lag", "Dynamic (num/den)"],
         index=0,
     )
 
-    # --- Prüfe, ob Typ gewechselt wurde ---
+    # check if type got changed
     last_ctype = st.session_state.get("last_ctype")
     if last_ctype != ctype:
-        # Reset aller Kompensator-spezifischen States, wenn Typ wechselt
+        # reset all if type gets changed
         st.session_state.pop("pid_params", None)
     st.session_state["last_ctype"] = ctype
     
@@ -118,14 +118,31 @@ def apply_delay(sys):
     add_delay = st.checkbox("Add time delay τ (Padé or exact)", value=False)
     if not add_delay:
         return sys, None, None
+
     tau = st.number_input("Time delay τ (seconds)", value=1.0, step=0.1, format="%.6g")
-    method = st.radio("Delay model", ["Padé approximation", "Exact e^{-sτ} (frequency-domain only)"],
-                      index=0, horizontal=True)
-    if method == "Padé approximation":
+
+    # Load MathJax once (for LaTeX rendering in labels)
+    st.markdown(
+        r"<script type='text/javascript' src='https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js'></script>",
+        unsafe_allow_html=True
+    )
+
+    # Use LaTeX directly in radio labels
+    method = st.radio(
+        "Delay model",
+        [
+            "Padé approximation",
+            "Exact $e^{-s\\tau}$ (frequency-domain only)"
+        ],
+        index=0,
+        horizontal=True,
+    )
+
+    # Handle the two delay types
+    if method.startswith("Padé"):
         order = st.slider("Padé order", min_value=1, max_value=4, value=1, step=1)
         num_d, den_d = ctl.pade(tau, order)
         D = ctl.tf(num_d, den_d)
-        # ⬅️ Gib sowohl sys*D als auch D selbst zurück
         return sys * D, ("pade", tau, order, D), None
     else:
         return sys, ("exact", tau, None, None), None
@@ -187,12 +204,12 @@ with st.sidebar:
     st.header("Frequency range")
     wmin = st.number_input("ω min (rad/s)", value=1e-2, step=0.1, format="%.6g")
     wmax = st.number_input("ω max (rad/s)", value=1e2, step=10.0, format="%.6g")
-    pts  = 750 #sets a fixed value for the frequency points
-    # FIXED: Removed max(wmax, wmin*10) - now uses wmin and wmax directly
+    pts  = 750 #fixed value now, could be a range
     w = np.logspace(np.log10(max(wmin, 1e-8)), np.log10(wmax), pts)
 
     st.header("Frequency Domain Specifications")
     st.subheader("(Bode obstacle course\)")
+
     # --- Phase Margin ---
     show_pm = st.checkbox("Show phase margin specification", value=False)
     min_pm = (
@@ -214,7 +231,7 @@ with st.sidebar:
         if show_bw else None
     )
 
-    # --- Frequency-dependent bounds (low/high frequency specs) ---
+    # --- low/high frequency specs ---
     show_bounds = st.checkbox("Show frequency-dependent bounds", value=False)
     if show_bounds:
         st.markdown("**Low-frequency (disturbance attenuation):**")
@@ -235,7 +252,6 @@ with st.sidebar:
     else:
         freq_bounds = {"show": False}
 
-    # --- Collect all specs in one config object ---
     specs = SpecConfig(
         show_specs=any([show_pm, show_gm, show_bw, show_bounds]),
         min_phase_margin_deg=min_pm,
@@ -247,7 +263,7 @@ with st.sidebar:
 if P is None:
     st.stop()
 
-# --- Combined Transfer Function Display (with optional delay) ---
+# --- Total TF (with potential delay) ---
 if P is not None:
     st.subheader("Resulting Transfer Functions")
 
@@ -282,15 +298,15 @@ if P is not None:
         den_str = poly_to_latex(den)
         return r"\frac{" + num_str + "}{" + den_str + "}"
 
-    # Detect if compensator active
+    # is compensator active?
     comp_active = "C" in locals() and C is not None and not (
         len(ctl.tfdata(C)[0][0][0]) == 1 and ctl.tfdata(C)[0][0][0][0] == 1
     )
 
-    # Choose which system to show (with delay or base)
+    # Choose which system to show
     L_display = L_delay if delay_info is not None else L_base
 
-    # --- Case 1: No compensator ---
+    # --- No compensator ---
     if not comp_active:
         if delay_info is None:
             st.latex(r"L(s) = P(s) = " + tf_to_latex(P))
@@ -323,12 +339,13 @@ if P is not None:
                     \end{{aligned}}"""
                 )
 
-    # --- Case 2: With compensator (PID and non-PID) ---
+    # --- With compensator  ---
     else:
         L = C * P
         pid = st.session_state.get("pid_params", None)
 
-        if pid is not None:  # PID custom formatting
+        # special format for PID
+        if pid is not None:  
             def cn(x):
                 return str(int(round(x))) if abs(x - round(x)) < 1e-10 else f"{x:.4g}"
             Kp, Ki, Kd, N = pid["Kp"], pid["Ki"], pid["Kd"], pid["N"]
@@ -380,7 +397,7 @@ if P is not None:
                 )
 
         else:
-            # Non-PID compensator
+            # Compensator without PID
             if delay_info is None:
                 st.latex(
                     rf"""\begin{{aligned}}
@@ -423,7 +440,6 @@ col1, col2 = st.columns(2)
 # ---------- Margins and Bandwidth ----------
 gm, pm, wgc, wpc, bw = compute_margins_and_bw(L_base, w)
 
-# Initialize session state
 if "show_margins" not in st.session_state:
     st.session_state.show_margins = False
 
@@ -441,7 +457,7 @@ with col1:
     mag_db = 20 * np.log10(mag_base)
     ax1.semilogx(w, mag_db, label="No delay", lw=2)
     #ymin, ymax = np.min(mag_db), np.max(mag_db)
-    # optional delay curve
+
     if delay_info is not None:
         if delay_info[0] == "pade":
             mag_d, _ = bode_np(L_delay, w)
@@ -462,21 +478,21 @@ with col1:
         ax1.text(wgc, (mag_at_wgc + 0) / 2, f"GM\n{20*np.log10(gm):.2f} dB", color="b", fontsize=9, ha="center", va="center", 
                  bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
 
-    # --- Specs overlay: Min Gain Margin ---
+    # --- Specs, Min Gain Margin ---
     if specs.show_specs and specs.min_gain_margin_db is not None:
         min_gm_db = specs.min_gain_margin_db
         ax1.axhline(min_gm_db, color="orange", ls="--", lw=2, alpha=0.7, label=f"Min GM = {min_gm_db} dB")
         ax1.fill_between(w, -150, min_gm_db, alpha=0.1, color="red")
     
-    # --- Frequency-dependent bounds ---
+    # --- Freq. dependent bounds ---
     if freq_bounds["show"]:
-        # Low frequency region (disturbance attenuation)
+        # Low frequency
         freq_low_max = freq_bounds["freq_low_max"]
         mag_low_min = freq_bounds["mag_low_min"]
         ax1.fill_between(w[w <= freq_low_max], mag_low_min, -150, alpha=0.2, color="red", label="Disturbance attenuation")
         ax1.axvline(freq_low_max, color="gray", ls="--", lw=1, alpha=0.5)
         
-        # High frequency region (measurement noise)
+        # High frequency 
         freq_high_min = freq_bounds["freq_high_min"]
         mag_high_max = freq_bounds["mag_high_max"]
         ax1.fill_between(w[w >= freq_high_min], mag_high_max, 150, alpha=0.2, color="red", label="Measurement noise")
@@ -486,7 +502,7 @@ with col1:
 
     ax1.set_ylabel("Magnitude (dB)")
     ax1.set_xlabel("ω (rad/s)")
-    ax1.set_xlim([w[0], w[-1]])  # FIXED: Force proper x-range
+    ax1.set_xlim([w[0], w[-1]])
     ax1.grid(True, which="both", ls=":")
     ax1.legend(fontsize=9)
     st.pyplot(fig1)
@@ -496,7 +512,6 @@ with col2:
     st.markdown("**Phase**")
     fig2, ax2 = plt.subplots(figsize=(8, 5))
     
-    # --- Phase plot: NO unwrapping to avoid artifacts ---
     ax2.semilogx(w, phase_base, label="No delay", lw=2)
 
     if delay_info is not None:
@@ -504,13 +519,13 @@ with col2:
             _, phase_d = bode_np(L_delay, w)
             ax2.semilogx(w, phase_d, "--", label=f"With delay (Padé n={delay_info[2]})", lw=2)
         else:
-            _, phase_d_delayed, _, _ = bode_with_optional_exact_delay(L_base, delay_info, w)
+            _, _, _, phase_d_delayed = bode_with_optional_exact_delay(L_base, delay_info, w)
             ax2.semilogx(w, phase_d_delayed, "--", label=f"With delay (exact τ={delay_info[1]:.3g}s)", lw=2)
 
     # Reference line (−180°)
     ax2.axhline(-180, color="black", lw=0.8, ls="-", alpha=0.7)
 
-    # Bandwidth markieren
+    # Bandwidth
     if np.isfinite(bw):
         ax2.axvline(bw, color="g", ls="--", alpha=0.6, lw=1.5, label=f"BW ω_bw={bw:.3g}")
     
@@ -524,7 +539,7 @@ with col2:
         ax2.text(wpc, y_mid, f"PM\n{pm:.2f}°", color="r", fontsize=9, ha="center", va="center",
                 bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
 
-    # --- Specs overlay: Min Phase Margin und Target Bandwidth ---
+    # --- min phase margin and target bandwitdth---
     if specs.show_specs:
         if specs.min_phase_margin_deg is not None:
             min_pm = specs.min_phase_margin_deg
@@ -538,7 +553,7 @@ with col2:
 
     ax2.set_ylabel("Phase (deg)")
     ax2.set_xlabel("ω (rad/s)")
-    ax2.set_xlim([w[0], w[-1]])  # FIXED: Force same x-range as magnitude plot
+    ax2.set_xlim([w[0], w[-1]]) 
     ax2.grid(True, which="both", ls=":")
     ax2.legend(fontsize=9)
     st.pyplot(fig2)
