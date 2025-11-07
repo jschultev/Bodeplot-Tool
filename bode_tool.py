@@ -220,7 +220,7 @@ with st.sidebar:
     # --- Gain Margin ---
     show_gm = st.checkbox("Show gain margin specification", value=False)
     min_gm_db = (
-        st.number_input("Min gain margin (dB)", value=6.0, step=1.0, format="%.6g")
+        st.number_input("Min gain margin (dB)", value=10.0, step=1.0, format="%.6g")
         if show_gm else None
     )
 
@@ -482,7 +482,19 @@ with col1:
     if specs.show_specs and specs.min_gain_margin_db is not None:
         min_gm_db = specs.min_gain_margin_db
         ax1.axhline(min_gm_db, color="orange", ls="--", lw=2, alpha=0.7, label=f"Min GM = {min_gm_db} dB")
-        ax1.fill_between(w, -150, min_gm_db, alpha=0.1, color="red")
+
+        # Find where magnitude > min_gm_db
+        satisfied = mag_db > min_gm_db
+        # Identify continuous ω segments where condition holds
+        if np.any(satisfied):
+            segments = np.split(w, np.where(np.diff(satisfied.astype(int)) != 0)[0] + 1)
+            for seg in segments:
+                if len(seg) > 1 and satisfied[np.where(w == seg[0])[0][0]]:
+                    ax1.axvspan(seg[0], seg[-1], color="green", alpha=0.15)
+        else:
+            # Optional annotation if nothing satisfies
+            ax1.text(w[len(w)//2], min_gm_db - 10, "No gain margin region meets spec", 
+                    color="red", ha="center", fontsize=8)
     
     # --- Freq. dependent bounds ---
     if freq_bounds["show"]:
@@ -545,7 +557,17 @@ with col2:
             min_pm = specs.min_phase_margin_deg
             spec_phase_line = -180 + min_pm
             ax2.axhline(spec_phase_line, color="orange", ls="--", lw=2, alpha=0.7, label=f"Min PM = {min_pm}°")
-            ax2.fill_between(w, -500, spec_phase_line, alpha=0.1, color="red")
+
+            # Find where phase is above required line
+            satisfied = phase_base > spec_phase_line
+            if np.any(satisfied):
+                segments = np.split(w, np.where(np.diff(satisfied.astype(int)) != 0)[0] + 1)
+                for seg in segments:
+                    if len(seg) > 1 and satisfied[np.where(w == seg[0])[0][0]]:
+                        ax2.axvspan(seg[0], seg[-1], color="green", alpha=0.15)
+            else:
+                ax2.text(w[len(w)//2], spec_phase_line - 20, "No phase margin region meets spec",
+                        color="red", ha="center", fontsize=8)
         
         if specs.target_bw_rad is not None:
             target_bw = specs.target_bw_rad
