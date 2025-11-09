@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 st.set_page_config(page_title="Bode Plot Tool", layout="wide")
 
 st.title("Bode Plot Tool")
-st.caption("Bode plots, margins/bandwidth, time delays, compensators.")
+st.caption("Bode plots, margins/bandwidth, time delays, compensators, frequency specifications.")
 
 # ---------- Helpers ----------
 @dataclass
@@ -121,7 +121,7 @@ def apply_delay(sys):
 
     tau = st.number_input("Time delay τ (seconds)", value=1.0, step=0.1, format="%.6g")
 
-    # Load MathJax once (for LaTeX rendering in labels)
+    # Load MathJax once (for LaTeX rendering in labels) (for correct display of TF)
     st.markdown(
         r"<script type='text/javascript' src='https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js'></script>",
         unsafe_allow_html=True
@@ -187,6 +187,7 @@ with st.sidebar:
     if P is not None:
         P = K*P
 
+    # --- Compensator ---
     st.header("Compensator (optional)")
     if P is not None:
         L_base, C, comp_err = apply_compensator(P)
@@ -195,18 +196,41 @@ with st.sidebar:
     else:
         L_base, C = None, ctl.tf([1],[1])
 
+    # --- Time Delay ---
     st.header("Time Delay (optional)")
     if L_base is not None:
         L_delay, delay_info, delay_err = apply_delay(L_base)
     else:
         L_delay, delay_info, delay_err = None, None, None
 
+    st.markdown("---")
+    # --- Frequency Range ---
     st.header("Frequency range")
     wmin = st.number_input("ω min (rad/s)", value=1e-2, step=0.1, format="%.6g")
     wmax = st.number_input("ω max (rad/s)", value=1e2, step=10.0, format="%.6g")
     pts  = 750 #fixed value now, could be a range
     w = np.logspace(np.log10(max(wmin, 1e-8)), np.log10(wmax), pts)
 
+    # --- Manual Axis Control ---
+    st.header("Vertical Axis range (optional)")
+
+    # Magnitude axis control
+    mag_manual = st.checkbox("Set Magnitude (dB) range", value=False)
+    if mag_manual:
+        mag_ymin = st.number_input("Magnitude min (dB)", value=-60.0, step=5.0)
+        mag_ymax = st.number_input("Magnitude max (dB)", value=20.0, step=5.0)
+    else:
+        mag_ymin = mag_ymax = None  # autoscale
+
+    # Phase axis control
+    phase_manual = st.checkbox("Set Phase (deg) range", value=False)
+    if phase_manual:
+        phase_ymin = st.number_input("Phase min (deg)", value=-360.0, step=30.0)
+        phase_ymax = st.number_input("Phase max (deg)", value=0.0, step=30.0)
+    else:
+        phase_ymin = phase_ymax = None  # autoscale
+
+    st.markdown("---")
     st.header("Frequency Domain Specifications")
     st.subheader("(Bode obstacle course\)")
 
@@ -265,7 +289,7 @@ if P is None:
 
 # --- Total TF (with potential delay) ---
 if P is not None:
-    st.subheader("Resulting Transfer Functions")
+    st.subheader("Resulting Transfer Function")
 
     # helper formatting
     def clean_num(x):
@@ -327,7 +351,7 @@ if P is not None:
                 num_str = poly_to_latex(num_d)
                 den_str = poly_to_latex(den_d)
 
-                # Saubere LaTeX-Strings mit Formatkorrektur
+                # LaTeX-strings with correct form
                 pade_formula = rf"e^{{-s\tau}} \approx \frac{{{num_str}}}{{{den_str}}},\quad n={order},\;\tau={tau:.3g}"
 
                 st.latex(
@@ -443,7 +467,7 @@ gm, pm, wgc, wpc, bw = compute_margins_and_bw(L_base, w)
 if "show_margins" not in st.session_state:
     st.session_state.show_margins = False
 
-# Toggle Button BEFORE plots
+# Toggle Button before plots
 if st.button("Show / Hide margins"):
     st.session_state.show_margins = not st.session_state.show_margins
 
@@ -485,14 +509,13 @@ with col1:
 
         # Find where magnitude > min_gm_db
         satisfied = mag_db > min_gm_db
-        # Identify continuous ω segments where condition holds
         if np.any(satisfied):
             segments = np.split(w, np.where(np.diff(satisfied.astype(int)) != 0)[0] + 1)
             for seg in segments:
                 if len(seg) > 1 and satisfied[np.where(w == seg[0])[0][0]]:
                     ax1.axvspan(seg[0], seg[-1], color="green", alpha=0.15)
         else:
-            # Optional annotation if nothing satisfies
+            # If nothing satisfies
             ax1.text(w[len(w)//2], min_gm_db - 10, "No gain margin region meets spec", 
                     color="red", ha="center", fontsize=8)
     
@@ -515,6 +538,10 @@ with col1:
     ax1.set_ylabel("Magnitude (dB)")
     ax1.set_xlabel("ω (rad/s)")
     ax1.set_xlim([w[0], w[-1]])
+    if mag_ymin is not None and mag_ymax is not None:
+        ax1.set_ylim([mag_ymin, mag_ymax])
+    else:
+        ax1.autoscale(enable=True, axis='y')
     ax1.grid(True, which="both", ls=":")
     ax1.legend(fontsize=9)
     st.pyplot(fig1)
@@ -558,7 +585,7 @@ with col2:
             spec_phase_line = -180 + min_pm
             ax2.axhline(spec_phase_line, color="orange", ls="--", lw=2, alpha=0.7, label=f"Min PM = {min_pm}°")
 
-            # Find where phase is above required line
+            # where is the phase above required line
             satisfied = phase_base > spec_phase_line
             if np.any(satisfied):
                 segments = np.split(w, np.where(np.diff(satisfied.astype(int)) != 0)[0] + 1)
@@ -576,6 +603,10 @@ with col2:
     ax2.set_ylabel("Phase (deg)")
     ax2.set_xlabel("ω (rad/s)")
     ax2.set_xlim([w[0], w[-1]]) 
+    if phase_ymin is not None and phase_ymax is not None:
+        ax2.set_ylim([phase_ymin, phase_ymax])
+    else:
+        ax2.autoscale(enable=True, axis='y')
     ax2.grid(True, which="both", ls=":")
     ax2.legend(fontsize=9)
     st.pyplot(fig2)
@@ -607,13 +638,19 @@ st.caption("After changing the export mode, please wait a few seconds until the 
 buf = io.BytesIO()
 
 if export_mode == "Magnitude":
-    fig, ax = plt.subplots()
-    ax.semilogx(w, 20*np.log10(mag_base))
-    ax.set_ylabel("Magnitude (dB)")
-    ax.set_xlabel("ω (rad/s)")
-    ax.grid(True, which="both", ls=":")
-    fig.tight_layout()
-    fig.savefig(buf, format="png", dpi=200)
+
+    #fully new plot
+    #fig, ax = plt.subplots()
+    #ax.semilogx(w, 20*np.log10(mag_base))
+    #ax.set_ylabel("Magnitude (dB)")
+    #ax.set_xlabel("ω (rad/s)")
+    #ax.grid(True, which="both", ls=":")
+    #fig.tight_layout()
+    #fig.savefig(buf, format="png", dpi=200)
+
+    #existing plot
+    fig1.savefig(buf, format="png", dpi=300, bbox_inches="tight")
+    
     st.download_button(
         "Download magnitude plot (PNG)",
         data=buf.getvalue(),
@@ -622,13 +659,19 @@ if export_mode == "Magnitude":
     )
 
 elif export_mode == "Phase":
-    fig, ax = plt.subplots()
-    ax.semilogx(w, phase_base)
-    ax.set_ylabel("Phase (deg)")
-    ax.set_xlabel("ω (rad/s)")
-    ax.grid(True, which="both", ls=":")
-    fig.tight_layout()
-    fig.savefig(buf, format="png", dpi=200)
+
+    #fully new plot
+    #fig, ax = plt.subplots()
+    #ax.semilogx(w, phase_base)
+    #ax.set_ylabel("Phase (deg)")
+    #ax.set_xlabel("ω (rad/s)")
+    #ax.grid(True, which="both", ls=":")
+    #fig.tight_layout()
+    #fig.savefig(buf, format="png", dpi=200)
+
+    #existing plot
+    fig2.savefig(buf, format="png", dpi=300, bbox_inches="tight")
+
     st.download_button(
         "Download phase plot (PNG)",
         data=buf.getvalue(),
@@ -637,6 +680,8 @@ elif export_mode == "Phase":
     )
 
 else:
+
+    #fully new plots
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
     ax1.semilogx(w, 20*np.log10(mag_base))
     ax1.set_ylabel("Magnitude (dB)")
@@ -648,9 +693,61 @@ else:
     ax2.grid(True, which="both", ls=":")
     fig.tight_layout()
     fig.savefig(buf, format="png", dpi=200)
+
+    #existing plot
+    #fig_combined, (axA, axB) = plt.subplots(1, 2, figsize=(10, 4))
+
+    # copy magnitude from fig1
+    #for line in fig1.axes[0].get_lines():
+    #    axA.plot(line.get_xdata(), line.get_ydata(), label=line.get_label(), ls=line.get_linestyle(), lw=line.get_linewidth())
+    #axA.set_xscale("log")
+    #axA.set_xlabel("ω (rad/s)")
+    #axA.set_ylabel("Magnitude (dB)")
+    #axA.legend(fontsize=8)
+    #axA.grid(True, which="both", ls=":")
+
+    # copy phase from fig2
+    #for line in fig2.axes[0].get_lines():
+    #    axB.plot(line.get_xdata(), line.get_ydata(), label=line.get_label(), ls=line.get_linestyle(), lw=line.get_linewidth())
+    #axB.set_xscale("log")
+    #axB.set_xlabel("ω (rad/s)")
+    #axB.set_ylabel("Phase (deg)")
+    #axB.legend(fontsize=8)
+    #axB.grid(True, which="both", ls=":")
+
+    #fig_combined.tight_layout()
+    #fig_combined.savefig(buf, format="png", dpi=300, bbox_inches="tight")
+
     st.download_button(
         "Download combined (PNG)",
         data=buf.getvalue(),
         file_name="bode_combined.png",
         mime="image/png"
     )
+st.markdown(
+    """
+    <style>
+    /* Unteres Padding des Haupt-Containers entfernen */
+    .block-container {
+        padding-bottom: 3rem !important;
+    }
+
+    /* zusätzliche Sicherheitsvariante über data-testid */
+    [data-testid="stAppViewContainer"] .block-container {
+        padding-bottom: 3rem !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+st.markdown("---")
+st.markdown(
+    "<div style='text-align: center; font-size: 0.9em; color: gray;'>"
+    "Control Systems I, <b>Prof. Emilio Frazzoli</b>"
+    "<br>"
+    "Institute for Dynamic Systems and Control, ETH"  
+    "<br>"
+    "Developed by <b>Matteo Penlington</b> and <b>Johannes Schulte-Vels</b>"
+    "</div>",
+    unsafe_allow_html=True
+)
